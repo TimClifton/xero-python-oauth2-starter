@@ -4,10 +4,12 @@ from functools import wraps
 from io import BytesIO
 from logging.config import dictConfig
 
+import dateutil
+
 from flask import Flask, url_for, render_template, session, redirect, json, send_file
 from flask_oauthlib.contrib.client import OAuth, OAuth2Application
 from flask_session import Session
-from xero_python.accounting import AccountingApi, ContactPerson, Contact, Contacts
+from xero_python.accounting import AccountingApi, ContactPerson, Contact, Contacts, BankTransactions, BankTransaction
 from xero_python.api_client import ApiClient, serialize
 from xero_python.api_client.configuration import Configuration
 from xero_python.api_client.oauth2 import OAuth2Token
@@ -15,8 +17,11 @@ from xero_python.exceptions import AccountingBadRequestException
 from xero_python.identity import IdentityApi
 from xero_python.utils import getvalue
 
+
 import logging_settings
 from utils import jsonify, serialize_model
+
+import pdb
 
 dictConfig(logging_settings.default_settings)
 
@@ -24,6 +29,9 @@ dictConfig(logging_settings.default_settings)
 app = Flask(__name__)
 app.config.from_object("default_settings")
 app.config.from_pyfile("config.py", silent=True)
+
+#GPT advice
+#app.config['SESSION_TYPE'] = 'filesystem'
 
 if app.config["ENV"] != "production":
     # allow oauth2 loop to run over http (used for local testing only)
@@ -90,6 +98,7 @@ def xero_token_required(function):
 
 @app.route("/")
 def index():
+    #pdb.set_trace()
     xero_access = dict(obtain_xero_oauth2_token() or {})
     return render_template(
         "code.html",
@@ -158,6 +167,9 @@ def create_contact_person():
     return render_template(
         "code.html", title="Create Contacts", code=code, sub_title=sub_title
     )
+
+
+
 
 
 @app.route("/create-multiple-contacts")
@@ -267,12 +279,53 @@ def export_token():
 def refresh_token():
     xero_token = obtain_xero_oauth2_token()
     new_token = api_client.refresh_oauth2_token()
+
     return render_template(
         "code.html",
         title="Xero OAuth2 token",
         code=jsonify({"Old Token": xero_token, "New token": new_token}),
         sub_title="token refreshed",
     )
+
+@app.route("/transactions")
+@xero_token_required
+def get_transactions():
+    xero_tenant_id = get_xero_tenant_id()
+    accounting_api = AccountingApi(api_client)
+    if_modified_since = dateutil.parser.parse("2020-02-06T12:17:43.202-08:00")
+    where = 'Status!="DELETED"'
+    order = 'Date ASC'
+    transactions :BankTransaction = accounting_api.get_bank_transactions(xero_tenant_id=xero_tenant_id, if_modified_since=if_modified_since , where=where, order=order ) #, order=order)
+
+    filtered_list = []
+    for trans in transactions.bank_transactions:
+
+        assert(trans,BankTransaction)
+
+        if not trans.is_reconciled:
+        # print(trans.total)
+
+        # if trans.total>4000:
+
+            filtered_list.append(trans)
+
+
+
+    # invoices = accounting_api.get_invoices(
+    #     xero_tenant_id, statuses=["DRAFT", "SUBMITTED"]
+    # )
+    # code = serialize_model(invoices)
+    # sub_title = "Total invoices found: {}".format(len(invoices.invoices))
+
+    
+    code = serialize_model(filtered_list)
+    sub_title = "Total invoices found: {}".format(len(transactions.bank_transactions))
+
+    return render_template(
+        "code.html", title="Transactions", code=code, sub_title=sub_title
+    )
+
+
 
 
 def get_xero_tenant_id():
